@@ -1,0 +1,75 @@
+name: Build Image
+
+on:
+  pull_request:
+    types: [opened, reopened]
+    branches:
+      - "main"
+  push:
+    branches:
+      - "main"
+
+permissions:
+  contents: write
+  id-token: write
+
+env:
+  HCP_CLIENT_ID: ${{ secrets.HCP_CLIENT_ID }}
+  HCP_CLIENT_SECRET: ${{ secrets.HCP_CLIENT_SECRET }}
+  HCP_PROJECT_ID: ${{ secrets.HCP_PROJECT_ID }}
+  HCP_ORGANIZATION_ID: ${{ secrets.HCP_ORGANIZATION_ID }}
+  AWS_REGION: ${{ secrets.AWS_REGION }}
+
+jobs:
+  build-artifact:
+    name: Build AMI
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@3df4ab11eba7bda6032a0b82a6bb43b11571feac # v4.0.0
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@8c3f20df09ac63af7b3ae3d7c91f105f857d8497 # v4.0.0
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Setup Packer
+        uses: hashicorp/setup-packer@main
+        id: setup
+
+      - name: Packer Init
+        run: packer init .
+
+      - name: Packer Build
+        run: PKR_VAR_region="$AWS_REGION" packer build . 
+    
+
+  update-hcp-packer-channel:
+      name: Update HCP Packer channel
+      needs: 
+        - build-artifact
+      runs-on: ubuntu-latest
+      steps:
+          - name: Checkout Repository
+            uses: actions/checkout@3df4ab11eba7bda6032a0b82a6bb43b11571feac # v4.0.0
+
+          - name: Create and set channel
+            working-directory: .github/scripts
+            run: ./create_channel_version.sh nomad-consul-vault ${{ github.sha }} production
+  
+  tag-release:
+    name: Tag Release
+    needs:
+      - update-hcp-packer-channel
+    runs-on: ubuntu-latest
+    steps:
+        - name: Checkout Repository
+          uses: actions/checkout@3df4ab11eba7bda6032a0b82a6bb43b11571feac # v4.0.0
+
+        - name: Bump version and create tag
+          working-directory: .github/scripts
+          run: ./bump_and_create_tag.sh
+            
